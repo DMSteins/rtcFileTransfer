@@ -1,114 +1,137 @@
 <template>
-  <button @click="openChannel">创建offer</button>
-  <div>
-    <div>
+  <div class="box">
+    <div class="peer-item">
+      <div>发起者</div>
+      <button @click="createOfferPeer">创建offer peer</button>
       <div>
-        <textarea type="text" name="" v-model="text" />
-        <button @click="openAnswer">创建answer</button>
-      </div>
-      <div>
-        <input type="text" name="" v-model="msg" />
-        <button @click="send">发送消息</button>
+        <!-- <div>
+          <textarea type="text" name="" v-model="text" />
+          <button >设置远程answer desc</button>
+        </div> -->
+        <div>
+          <input type="text" name="" v-model="offerInput" />
+          <button @click="answerSend">发送消息</button>
+        </div>
       </div>
     </div>
-    <div>
-
+    <div class="peer-item">
+      <div>响应者</div>
+      <button @click="createAnswerPeer">创建answer peer</button>
+      <div>
+        <div>
+          <textarea type="text" name="" v-model="connID" />
+          <button @click="answerConnect">连接offer</button>
+        </div>
+        <div>
+          <input type="text" name="" v-model="answerInput" />
+          <button @click="answerSend">发送消息</button>
+        </div>
+      </div>
     </div>
   </div>
-
-
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-const config = {
-  'sdpSemantics': 'unified-plan',
-  'iceServers': [{
-    urls: 'stun:stun.l.google.com:19302'
-  }]
+import { Peer } from "peerjs";
+const offerInput = ref('')
+const answerInput = ref('')
+const connID = ref('')
+let isCaller = false
+let peer: Peer
+let conn
+const createOfferPeer = () => {
+  isCaller = true
+  initialize()
 }
-const text = ref("")
-const msg = ref("")
-let conn: RTCPeerConnection | null = null
-const openConnect = () => {
-  conn = new RTCPeerConnection(config)
-  conn.onconnectionstatechange = (e) => {
-    console.log("onconnectionstatechange: ", e)
-  }
-  conn.onicecandidate = (e) => {
-    console.log("onicecandidate: ", e)
-  }
-  conn.oniceconnectionstatechange = (e) => {
-    console.log("oniceconnectionstatechange: ", e)
-  }
-  conn.ondatachannel = onChannelOpened
+const createAnswerPeer = () => {
+  initialize()
 }
-let _channel: RTCDataChannel | null = null
-const openChannel = () => {
-  if (!conn) return
-  const channel = conn.createDataChannel('data-channel');
-  channel.onopen = onChannelOpened
-  conn.createOffer().then((d) => {
-    if (!conn) return
-    console.log('onDescription: ', d)
-    conn.setLocalDescription(d)
-  }).catch(e => {
-    console.log('createOffer error:', e)
+const answerConnect = () => {
+  if (conn) {
+    conn.close()
+  }
+  conn = peer.connect(connID.value, { reliable: true })
+  conn.on('open', () => {
+    console.log('open:', conn.peer)
+  })
+  conn.on('data', (data) => {
+    console.log('answer get msg:', data)
+  })
+  conn.on('close', () => {
+
+  })
+}
+const answerSend = () => {
+  if (conn && conn.open) {
+    conn.send(answerInput.value || offerInput.value)
+  }
+}
+const initialize = () => {
+  // Create own peer object with connection to shared PeerJS server
+  peer = new Peer();
+
+  peer.on('open', function (id) {
+    // Workaround for peer.reconnect deleting previous id
+    // if (peer.id === null) {
+    //   console.log('Received null id from peer open');
+    //   peer.id = lastPeerId;
+    // } else {
+    //   lastPeerId = peer.id;
+    // }
+
+    console.log('ID: ', peer.id);
+    // recvId.innerHTML = "ID: " + peer.id;
+    // status.innerHTML = "Awaiting connection...";
   });
-}
-const openAnswer = () => {
-  if (!conn) return
-  conn.setRemoteDescription(new RTCSessionDescription({ sdp: text.value, type: 'offer' }))
-    .then(_ => {
-      if (!conn) return
-      return conn.createAnswer()
-        .then(d => {
-          if (!conn) return
-          conn.setLocalDescription(d)
-          console.log('answer onDescription: ', d)
-        });
+  peer.on('connection', function (c) {
+    // Allow only a single connection
+    // if (conn && conn.open) {
+    //   c.on('open', function () {
+    //     c.send("Already connected to another client");
+    //     setTimeout(function () { c.close(); }, 500);
+    //   });
+    //   return;
+    // }
+    if (isCaller) {
+      conn = c;
+      conn.on('data', (data) => {
+        console.log('caller get msg:', data)
+      })
+    }
 
-    })
-    .catch(e => {
-      console.log('answer error:', e)
-    });
-}
+    console.log("Connected to: " + conn.peer);
 
-const onChannelOpened = (event) => {
-  console.log('**********RTC: channel opened with', event);
-  const channel = event.channel || event.target;
-  channel.binaryType = 'arraybuffer';
-  channel.onmessage = (e) => onMsg(e.data);
-  channel.onclose = (e) => onClose();
-  _channel = channel
-}
-const messages = reactive<string[]>([])
-const onMsg = (msgdata: string) => {
-  console.log(msgdata)
-  // messages.push(msgdata)
-}
-const onClose = () => {
-  console.log("channel close, should reopen")
-}
-const send = () => {
-  console.log(_channel)
-  if (!_channel) return;
-  _channel.send(msg.value)
-}
+  });
+  peer.on('disconnected', function () {
+
+    console.log('Connection lost. Please reconnect');
+
+    // // Workaround for peer.reconnect deleting previous id
+    // peer.id = lastPeerId;
+    // peer._lastServerId = lastPeerId;
+    // peer.reconnect();
+  });
+  peer.on('close', function () {
+    conn = null;
+    console.log('Connection destroyed');
+  });
+  peer.on('error', function (err) {
+    console.log(err);
+    alert('' + err);
+  });
+};
 onMounted(() => {
-  if (!conn) {
-    openConnect()
-  }
+
 })
 </script>
 
 <style>
-#app {
-  font-family: Avenir, Helvetica, Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-align: center;
-  color: #2c3e50;
-  margin-top: 60px;
+.box {
+  display: flex;
+}
+
+.peer-item {
+  width: 50%;
 }
 </style>
